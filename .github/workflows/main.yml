@@ -1,33 +1,53 @@
-name: Windows 11 (ARM) + Tailscale
-
-on:
-  workflow_dispatch:
+name: WinRDP via Tailscale (OAuth)
+on: [workflow_dispatch]
 
 jobs:
-  win11:
-    runs-on: windows-11-arm
-
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
     steps:
+      # 1. Connect using OAuth Credentials
       - name: Connect to Tailscale
-        uses: celsiusnarhwal/tailnet-link@v1
+        uses: tailscale/github-action@v4
         with:
-          authkey: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:github-runner  # Must match the tag in your OAuth Client setup
 
-      - name: Set RDP password
-        shell: pwsh
-        run: net user Administrator "${{ secrets.RDP_PASSWORD }}"
-
-      - name: Enable RDP & keep alive
-        shell: pwsh
+      # 2. Enable RDP & Set Password
+      - name: Enable RDP
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          New-NetFirewallRule -Name "Allow RDP" -DisplayName "Allow RDP" -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
+          $password = ConvertTo-SecureString "YourStrongPassword123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $password
 
-          $tsIp = (tailscale ip -4)
-          Write-Host "RDP to: $tsIp (port 3389)"
-          Write-Host "User: Administrator  Pass: $env:RDP_PASSWORD"
+      # 3. Grant Admin Rights
+      - name: Grant Admin Rights to runneradmin
+        run: |
+          # Add runneradmin to Administrators group, ignoring error if already a member
+          Add-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
+          
+          # Optional: Verify membership
+          Write-Host "Current Administrators:"
+          Get-LocalGroupMember -Group "Administrators" | Select-Object Name   
 
-          Write-Host "Keeping alive for 6 hours..."
+      # 4. Keep Alive & Show IP
+      - name: Show Connection Details
+        run: |
+          $ip = tailscale ip -4
+          Write-Host "CONNECT VIA TAILSCALE IP: $ip"
+          Write-Host "User: runneradmin | Pass: YourStrongPassword123!"
           Start-Sleep -Seconds 21600   
+
+          jobs:
+  # ... your existing jobs ...
+  rerun-trigger:
+    needs: [job1, job2] # Replace with your actual job names
+    if: failure() && fromJSON(github.run_attempt) < 3
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run rerun.yml -F run_id=${{ github.run_id }}   
