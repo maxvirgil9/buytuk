@@ -1,0 +1,41 @@
+name: WinRDP via Tailscale (OAuth)
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      # 1. Connect using OAuth Credentials
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:github-runner  # Must match the tag in your OAuth Client setup
+
+      # 2. Enable RDP & Set Password
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          $password = ConvertTo-SecureString "YourStrongPassword123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $password
+
+      # 3. Grant Admin Rights
+      - name: Grant Admin Rights to runneradmin
+        run: |
+          # Add runneradmin to Administrators group, ignoring error if already a member
+          Add-LocalGroupMember -Group "Administrators" -Member "runneradmin" -ErrorAction SilentlyContinue
+          
+          # Optional: Verify membership
+          Write-Host "Current Administrators:"
+          Get-LocalGroupMember -Group "Administrators" | Select-Object Name   
+
+      # 4. Keep Alive & Show IP
+      - name: Show Connection Details
+        run: |
+          $ip = tailscale ip -4
+          Write-Host "CONNECT VIA TAILSCALE IP: $ip"
+          Write-Host "User: runneradmin | Pass: YourStrongPassword123!"
+          Start-Sleep -Seconds 21600   
